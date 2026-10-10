@@ -2,7 +2,7 @@ import { RefResolver, isObject } from '../refs.js';
 import type { Direction, OpenAPIObject, RawChange } from '../types.js';
 import { diffSchema } from './schema.js';
 
-const METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'] as const;
+export const METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'] as const;
 
 interface Context {
   oldRefs: RefResolver;
@@ -196,8 +196,8 @@ function diffRequestBody(oldRaw: unknown, newRaw: unknown, endpoint: string, ctx
 // ----------------------------------------------------------------- responses
 
 function diffResponses(oldRaw: unknown, newRaw: unknown, endpoint: string, ctx: Context): void {
-  const a = isObject(oldRaw) ? oldRaw : {};
-  const b = isObject(newRaw) ? newRaw : {};
+  const a = statusCodes(oldRaw);
+  const b = statusCodes(newRaw);
 
   for (const status of Object.keys(a)) {
     const success = isSuccess(status);
@@ -220,6 +220,12 @@ function diffResponses(oldRaw: unknown, newRaw: unknown, endpoint: string, ctx: 
       });
     }
   }
+}
+
+/** The responses keyed by status code, without `x-` specification extensions. */
+function statusCodes(responses: unknown): OpenAPIObject {
+  if (!isObject(responses)) return {};
+  return Object.fromEntries(Object.entries(responses).filter(([key]) => !key.startsWith('x-')));
 }
 
 function isSuccess(status: string): boolean {

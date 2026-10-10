@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { parse as parseYaml } from 'yaml';
 import { RefError, isObject, validateRefs } from './refs.js';
 import type { OpenAPIObject } from './types.js';
+import { findStructureError } from './validate.js';
 
 export class SpecLoadError extends Error {}
 
@@ -53,6 +54,9 @@ export function parseSpec(text: string, source = '<inline>'): LoadedSpec {
     if (err instanceof RefError) throw new SpecLoadError(`${source}: ${err.message}`);
     throw err;
   }
+
+  const problem = findStructureError(doc);
+  if (problem) throw new SpecLoadError(`${source}: ${problem}`);
 
   return { source, version: doc.openapi, doc };
 }

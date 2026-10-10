@@ -151,7 +151,7 @@ function diffConstraints(a: SchemaObject, b: SchemaObject, emit: Emit): void {
   for (const c of UNORDERED) {
     const before = a[c];
     const after = b[c];
-    if (before === after) continue;
+    if (JSON.stringify(before) === JSON.stringify(after)) continue;
     if (before === undefined) report(c, 'tightened');
     else if (after === undefined) report(c, 'loosened');
     else report(c, 'changed');
@@ -215,7 +215,7 @@ function guessRename(
   ctx: SchemaDiffContext,
 ): string | undefined {
   const fingerprint = (schema: unknown, refs: RefResolver) => {
-    const { node } = refs.resolve(schema);
+    const { node } = refs.resolveSchema(schema);
     const { description, example, examples, title, deprecated, ...shape } = node ?? {};
     return JSON.stringify(shape);
   };
@@ -260,9 +260,7 @@ function diffComposition(
 type Emit = (kind: ChangeKind, extra?: Partial<RawChange>) => void;
 
 function normalize(schema: unknown, refs: RefResolver, direction: Direction): NormalizedSchema {
-  const { node, ref } = refs.resolve(schema ?? {});
-  let raw: SchemaObject = node ?? {};
-  if (Array.isArray(raw.allOf)) raw = mergeAllOf(raw, refs);
+  const { raw, ref } = flatten(schema, refs);
 
   const { types, nullable } = readTypes(raw);
 
@@ -270,7 +268,7 @@ function normalize(schema: unknown, refs: RefResolver, direction: Direction): No
   const hidden = direction === 'request' ? 'readOnly' : 'writeOnly';
   const properties: Record<string, SchemaObject> = {};
   for (const [name, prop] of Object.entries(isObject(raw.properties) ? raw.properties : {})) {
-    if (refs.resolve(prop).node?.[hidden] === true) continue;
+    if (flatten(prop, refs).raw[hidden] === true) continue;
     properties[name] = prop as SchemaObject;
   }
   const required = new Set<string>(
@@ -284,26 +282,121 @@ function normalize(schema: unknown, refs: RefResolver, direction: Direction): No
   return { raw, ref, types, nullable, properties, required, enum: enumValues };
 }
 
-/** Flattens `allOf` into a single schema: properties and `required` are unioned. */
+/** Resolves a schema and flattens a top-level `allOf`, giving the keywords that apply to it. */
+function flatten(schema: unknown, refs: RefResolver): { raw: SchemaObject; ref?: string } {
+  const { node, ref } = refs.resolveSchema(schema ?? {});
+  const raw: SchemaObject = node ?? {};
+  if (!Array.isArray(raw.allOf)) return { raw, ref };
+  // `{ allOf: [{ $ref }, ...] }` stands for that ref in cycle detection; without it, a
+  // recursive property declared in several branches would recurse forever.
+  const firstRef = raw.allOf.find((part: unknown) => isObject(part) && typeof part.$ref === 'string')?.$ref;
+  return { raw: mergeAllOf(raw, refs), ref: ref ?? firstRef };
+}
+
+/**
+ * Flattens `allOf` into one schema that accepts what every branch accepts: bounds take the
+ * strictest value, types and enums are intersected, `required` is unioned, a property declared
+ * in several branches combines its schemas, and differing patterns/formats are all kept.
+ */
 function mergeAllOf(schema: SchemaObject, refs: RefResolver, depth = 0): SchemaObject {
   const { allOf, ...rest } = schema;
-  const merged: SchemaObject = { ...rest };
-  const properties: Record<string, unknown> = { ...(rest.properties ?? {}) };
-  const required = new Set<string>(rest.required ?? []);
-
+  let merged: SchemaObject = rest;
   for (const part of allOf as unknown[]) {
-    let resolved = refs.resolve(part).node ?? {};
+    let resolved = refs.resolveSchema(part).node ?? {};
     if (Array.isArray(resolved.allOf) && depth < 32) resolved = mergeAllOf(resolved, refs, depth + 1);
-    Object.assign(properties, resolved.properties ?? {});
-    for (const r of resolved.required ?? []) required.add(r);
-    for (const [key, value] of Object.entries(resolved)) {
-      if (key !== 'properties' && key !== 'required' && merged[key] === undefined) merged[key] = value;
-    }
+    merged = intersect(merged, resolved);
   }
-
-  if (Object.keys(properties).length) merged.properties = properties;
-  if (required.size) merged.required = [...required];
   return merged;
+}
+
+/** Keywords where any branch saying `true` makes the merged schema say `true`. */
+const ANY_TRUE = ['nullable', 'readOnly', 'writeOnly', 'uniqueItems', 'deprecated'];
+
+function intersect(a: SchemaObject, b: SchemaObject): SchemaObject {
+  const out: SchemaObject = { ...a };
+  for (const [key, value] of Object.entries(b)) {
+    if (out[key] === undefined) out[key] = value;
+    else if (key === 'properties' && isObject(value) && isObject(out[key])) {
+      const properties: Record<string, unknown> = { ...out[key] };
+      for (const [name, prop] of Object.entries(value)) {
+        properties[name] = name in properties ? { allOf: [properties[name], prop] } : prop;
+      }
+      out[key] = properties;
+    } else if (key === 'required' && Array.isArray(value) && Array.isArray(out[key])) {
+      out[key] = [...new Set([...out[key], ...value])];
+    } else if (key === 'type') out[key] = intersectTypes(out[key], value);
+    else if (key === 'enum' && Array.isArray(value) && Array.isArray(out[key])) {
+      const keys = new Set(value.map((v) => JSON.stringify(v)));
+      out[key] = out[key].filter((v: unknown) => keys.has(JSON.stringify(v)));
+    } else if (key === 'items' && isObject(value) && isObject(out[key])) out[key] = { allOf: [out[key], value] };
+    else if (key === 'additionalProperties') {
+      if (value === false || out[key] === false) out[key] = false;
+      else if (isObject(value) && isObject(out[key])) out[key] = { allOf: [out[key], value] };
+      else if (isObject(value)) out[key] = value;
+    } else if (ANY_TRUE.includes(key)) out[key] = out[key] === true || value === true;
+    else if ((UNORDERED as readonly string[]).includes(key)) out[key] = unionValues(out[key], value);
+  }
+  intersectBound(out, a, b, 'maximum', 'exclusiveMaximum', (x, y) => x < y);
+  intersectBound(out, a, b, 'minimum', 'exclusiveMinimum', (x, y) => x > y);
+  for (const key of UPPER_BOUNDS) pickNumber(out, a, b, key, Math.min);
+  for (const key of LOWER_BOUNDS) pickNumber(out, a, b, key, Math.max);
+  return out;
+}
+
+/** Both numeric: keep the stricter one. Anything else (3.0 booleans) is handled by `intersectBound`. */
+function pickNumber(out: SchemaObject, a: SchemaObject, b: SchemaObject, key: string, pick: typeof Math.min) {
+  if (typeof a[key] === 'number' && typeof b[key] === 'number') out[key] = pick(a[key], b[key]);
+}
+
+/**
+ * In OpenAPI 3.0, `exclusiveMaximum: true` modifies `maximum`, so the flag follows whichever
+ * branch supplies the stricter bound (either flag when the bounds are equal). `false` is the
+ * default, so it is dropped rather than written. 3.1's numeric form is an ordinary bound.
+ */
+function intersectBound(
+  out: SchemaObject,
+  a: SchemaObject,
+  b: SchemaObject,
+  bound: string,
+  exclusive: string,
+  stricter: (x: number, y: number) => boolean,
+) {
+  if (typeof a[exclusive] !== 'boolean' && typeof b[exclusive] !== 'boolean') return;
+  const aHas = typeof a[bound] === 'number';
+  const bHas = typeof b[bound] === 'number';
+  if (!aHas && !bHas) return;
+
+  const flag = (s: SchemaObject) => s[exclusive] === true;
+  let exclusiveResult: boolean;
+  if (!aHas || !bHas) exclusiveResult = flag(aHas ? a : b);
+  else if (stricter(b[bound], a[bound])) exclusiveResult = flag(b);
+  else if (stricter(a[bound], b[bound])) exclusiveResult = flag(a);
+  else exclusiveResult = flag(a) || flag(b);
+
+  if (exclusiveResult) out[exclusive] = true;
+  else delete out[exclusive];
+}
+
+/** `integer` is the intersection of `integer` and `number`. An empty intersection keeps `a`. */
+function intersectTypes(a: unknown, b: unknown): unknown {
+  const list = (t: unknown): string[] => (Array.isArray(t) ? t : typeof t === 'string' ? [t] : []);
+  const other = new Set(list(b));
+  const common = list(a).flatMap((t) => {
+    if (other.has(t)) return [t];
+    if (t === 'integer' && other.has('number')) return ['integer'];
+    if (t === 'number' && other.has('integer')) return ['integer'];
+    return [];
+  });
+  const unique = [...new Set(common)];
+  if (unique.length === 0) return a;
+  return unique.length === 1 ? unique[0] : unique;
+}
+
+/** Differing unordered constraints (two patterns) all apply, so keep every distinct value. */
+function unionValues(a: unknown, b: unknown): unknown {
+  const values = [...(Array.isArray(a) ? a : [a]), ...(Array.isArray(b) ? b : [b])];
+  const unique = values.filter((v, i) => values.findIndex((w) => JSON.stringify(w) === JSON.stringify(v)) === i);
+  return unique.length === 1 ? unique[0] : unique;
 }
 
 function readTypes(schema: SchemaObject): { types: Set<string> | null; nullable: boolean } {

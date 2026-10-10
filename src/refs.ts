@@ -4,7 +4,30 @@ export class RefError extends Error {}
 
 /** Resolves local JSON-pointer `$ref`s ("#/components/schemas/Order") within one document. */
 export class RefResolver {
-  constructor(private readonly doc: OpenAPIObject) {}
+  /** OpenAPI 3.1 schemas are JSON Schema 2020-12, where keywords next to `$ref` also apply. */
+  private readonly schemaRefSiblingsApply: boolean;
+
+  constructor(private readonly doc: OpenAPIObject) {
+    this.schemaRefSiblingsApply = typeof doc.openapi === 'string' && doc.openapi.startsWith('3.1.');
+  }
+
+  /**
+   * Like `resolve`, for Schema Objects. In OpenAPI 3.1 a `$ref` with sibling keywords
+   * means "the target AND the siblings", so it resolves to `{ allOf: [target, siblings] }`.
+   * In 3.0 a Reference Object's siblings are ignored, exactly as `resolve` does.
+   */
+  resolveSchema(
+    node: unknown,
+    seen: ReadonlySet<string> = new Set(),
+  ): { node: OpenAPIObject | undefined; ref?: string } {
+    if (!this.schemaRefSiblingsApply || !isRef(node)) return this.resolve(node);
+
+    const { $ref: pointer, ...siblings } = node;
+    if (seen.has(pointer)) throw new RefError(`Circular $ref alias: ${pointer}`);
+    const target = this.resolveSchema(this.lookup(pointer), new Set(seen).add(pointer)).node;
+    if (Object.keys(siblings).length === 0) return { node: target, ref: pointer };
+    return { node: { allOf: [target ?? {}, siblings] }, ref: pointer };
+  }
 
   /**
    * Follows a chain of `$ref`s until it reaches a concrete node.
@@ -55,13 +78,13 @@ function isRef(value: unknown): value is { $ref: string } {
   return isObject(value) && typeof value.$ref === 'string';
 }
 
-/** Walks the whole document and checks that every `$ref` resolves. */
+/** Walks the whole document and checks that every `$ref` chain resolves without looping. */
 export function validateRefs(doc: OpenAPIObject): void {
   const resolver = new RefResolver(doc);
   const visit = (node: unknown): void => {
     if (Array.isArray(node)) return node.forEach(visit);
     if (!isObject(node)) return;
-    if (typeof node.$ref === 'string') resolver.lookup(node.$ref);
+    if (typeof node.$ref === 'string') resolver.resolve(node);
     for (const value of Object.values(node)) visit(value);
   };
   visit(doc);

@@ -113,6 +113,12 @@ describe('request bodies and responses', () => {
     ]);
   });
 
+  it('ignores x- extensions in the responses object', () => {
+    const responses = (extension: OpenAPIObject) => ({ ...ok, ...extension });
+    expect(verdicts(body(undefined, responses({ 'x-codegen': 'skip' })), body(undefined, ok))).toEqual([]);
+    expect(verdicts(body(undefined, ok), body(undefined, responses({ 'x-codegen': 'skip' })))).toEqual([]);
+  });
+
   it('removing a response content type is breaking', () => {
     const v1 = body(undefined, { '200': { description: 'ok', content: json } });
     expect(verdicts(v1, body(undefined, ok))).toEqual(['breaking response.mediaType.removed']);

@@ -78,6 +78,17 @@ describe('contractguard check', () => {
     expect(stderr).toContain('Cannot read does-not-exist.yaml');
   });
 
+  it('exits 2 instead of reporting compatibility when a spec is malformed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'contractguard-'));
+    const file = join(dir, 'bad.yaml');
+    await writeFile(file, 'openapi: 3.0.3\ninfo: { title: t, version: "1" }\npaths:\n  /a:\n    get: oops\n');
+    const { code, stdout, stderr } = await cli('check', file, file);
+    expect(code).toBe(EXIT.ERROR);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('paths["/a"].get: expected an object');
+    expect(stderr).not.toContain('unexpected error');
+  });
+
   it('accepts JSON specs', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'contractguard-'));
     const file = join(dir, 'spec.json');
@@ -104,5 +115,81 @@ describe('spec loading', () => {
 
   it('reports YAML syntax errors', () => {
     expect(() => parseSpec('openapi: [', 'bad.yaml')).toThrow(/bad.yaml: invalid YAML/);
+  });
+
+  it('rejects circular $ref aliases with a clear error', () => {
+    const doc = `openapi: 3.0.3
+paths: {}
+components:
+  schemas:
+    A: { $ref: '#/components/schemas/B' }
+    B: { $ref: '#/components/schemas/A' }`;
+    expect(() => parseSpec(doc, 'loop.yaml')).toThrow(SpecLoadError);
+    expect(() => parseSpec(doc, 'loop.yaml')).toThrow(/loop.yaml: Circular \$ref alias/);
+  });
+
+  describe('rejects malformed structures the comparison relies on', () => {
+    const withOperation = (op: string) => `openapi: 3.0.3\npaths:\n  /a:\n    get: ${op}`;
+    const cases: [string, string, RegExp][] = [
+      ['operation is not an object', withOperation('oops'), /paths\["\/a"\]\.get: expected an object/],
+      [
+        'parameters is not an array',
+        withOperation('{ parameters: limit, responses: {} }'),
+        /get\.parameters: expected an array/,
+      ],
+      [
+        'parameter has no location',
+        withOperation('{ parameters: [{ name: limit }], responses: {} }'),
+        /get\.parameters\[0\]: expected string "name" and "in"/,
+      ],
+      ['responses is not an object', withOperation('{ responses: ok }'), /get\.responses: expected an object/],
+      [
+        'content is not an object',
+        withOperation('{ requestBody: { content: json }, responses: {} }'),
+        /get\.requestBody\.content: expected an object/,
+      ],
+      [
+        'security is not an array',
+        withOperation('{ security: bearerAuth, responses: {} }'),
+        /get\.security: expected an array/,
+      ],
+      ['path item is not an object', 'openapi: 3.0.3\npaths:\n  /a: oops', /paths\["\/a"\]: expected an object/],
+      [
+        'top-level security is not an array',
+        'openapi: 3.0.3\npaths: {}\nsecurity: bearerAuth',
+        /^bad\.yaml: security: expected an array/,
+      ],
+    ];
+    for (const [name, doc, message] of cases) {
+      it(name, () => {
+        expect(() => parseSpec(doc, 'bad.yaml')).toThrow(SpecLoadError);
+        expect(() => parseSpec(doc, 'bad.yaml')).toThrow(message);
+      });
+    }
+
+    it('allows x- extensions wherever OpenAPI does', () => {
+      const doc = `openapi: 3.0.3
+x-owner: payments
+paths:
+  x-generated: true
+  /a:
+    x-internal: true
+    get:
+      x-rate-limit: 10
+      responses: { '200': { description: ok }, x-codegen: skip }`;
+      expect(() => parseSpec(doc)).not.toThrow();
+    });
+
+    it('resolves $refs before checking', () => {
+      const doc = `openapi: 3.0.3
+paths:
+  /a:
+    get:
+      responses: { '200': { $ref: '#/components/responses/Bad' } }
+components:
+  responses:
+    Bad: oops`;
+      expect(() => parseSpec(doc, 'bad.yaml')).toThrow(/responses\["200"\]: expected an object/);
+    });
   });
 });

@@ -110,7 +110,7 @@ Most "JSON diff" approaches get half of this table wrong, because they treat cha
 - **Request bodies:** body added or made required, content types dropped.
 - **Responses:** success codes removed or changed (e.g. `200` → `201`), new status codes, content types dropped.
 - **Security:** modelled as sets of alternatives with scopes. A change is breaking only if a client satisfying an old requirement no longer satisfies any new one. Relaxations are flagged for review because they may expose data.
-- **Schemas, recursively:** properties, required fields, types (`integer` ⊂ `number`), nullability (3.0 `nullable` and 3.1 `type: [.., null]`), enums and `const`, numeric/length/item bounds, `pattern`, `format`, `additionalProperties`, `readOnly`/`writeOnly`, `allOf` (merged), `oneOf`/`anyOf` (branch-wise), arrays, `$ref`s, and recursive schemas.
+- **Schemas, recursively:** properties, required fields, types (`integer` ⊂ `number`), nullability (3.0 `nullable` and 3.1 `type: [.., null]`), enums and `const`, numeric/length/item bounds, `pattern`, `format`, `additionalProperties`, `readOnly`/`writeOnly`, `allOf` (intersected: the strictest bound wins, and a property declared in several branches combines them), `oneOf`/`anyOf` (branch-wise), arrays, `$ref`s (in 3.1, keywords next to a `$ref` apply too), and recursive schemas.
 - **Rename hints:** a removed property paired with exactly one added property of identical shape is reported as a likely rename, with a migration suggestion.
 
 ## Severity levels and assumptions
@@ -129,6 +129,7 @@ These are deliberate scope decisions for v0.1, not oversights:
 
 - **The contract, not the implementation.** If the server changes behaviour without changing the spec, ContractGuard can't see it. Pair it with contract tests (e.g. Schemathesis, Pact) to check the implementation against the spec.
 - **Local `$ref`s only.** Multi-file specs must be bundled first (e.g. `redocly bundle`).
+- **Structural checks only.** The loader rejects malformed parts the comparison reads (operations, parameters, request bodies, responses, `security`) with exit code `2`, but it is not a full OpenAPI validator. Lint specs separately (e.g. `redocly lint`).
 - **OpenAPI 3.0 and 3.1.** Swagger 2.0 is rejected with conversion guidance.
 - **`oneOf`/`anyOf` are compared by branch position.** If the number of branches changes, the change is flagged for review rather than analysed.
 - **Not yet checked:** response headers, `discriminator` mappings, callbacks/webhooks, security scheme definitions themselves (only which schemes are required), and parameter `style`/`explode`.
@@ -138,14 +139,15 @@ These are deliberate scope decisions for v0.1, not oversights:
 ```text
 src/
   loader.ts          parse YAML/JSON, validate the OpenAPI version, resolve every $ref up front
-  refs.ts            JSON-pointer $ref resolution
+  validate.ts        reject malformed structures the comparison reads, with the exact location
+  refs.ts            JSON-pointer $ref resolution and circular-alias detection
   diff/spec.ts       endpoint-level diff: paths, params, bodies, responses, security
   diff/schema.ts     direction-aware recursive schema diff
   rules.ts           change kind → severity + reason + suggested fix
   report/format.ts   text / markdown / json output
   cli/run.ts         argument parsing and exit codes (pure, testable)
   bin.ts             process entry point
-test/                82 tests: every schema rule in both directions, operations, CLI, loading
+test/                118 tests: every schema rule in both directions, operations, CLI, loading
 examples/            a realistic v1 → v2 migration of a delivery orders API
 ```
 
