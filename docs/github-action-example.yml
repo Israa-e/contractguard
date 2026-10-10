@@ -19,8 +19,12 @@ jobs:
         with:
           node-version: 22
 
+      # Installed into its own directory: a global (-g) install from GitHub fails,
+      # because npm skips the dependencies it needs to build the package.
       - name: Install ContractGuard
-        run: npm install -g github:<your-github-user>/contractguard
+        run: |
+          npm install --prefix "$RUNNER_TEMP/contractguard" github:Israa-e/contractguard
+          echo "$RUNNER_TEMP/contractguard/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Check compatibility with the base branch
         run: |

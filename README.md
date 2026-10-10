@@ -39,15 +39,27 @@ The backend team can't catch this with their own tests, because those tests use 
 
 ## Quick start
 
+Requires Node.js 20 or later.
+
 ```bash
-git clone https://github.com/<your-github-user>/contractguard && cd contractguard
-npm install
+git clone https://github.com/Israa-e/contractguard && cd contractguard
+npm install    # also builds dist/
 npm run demo   # compares examples/orders-v1.yaml → examples/orders-v2.yaml
 ```
 
+To put the `contractguard` command on your PATH, run `npm link` from the clone. Then:
+
 ```bash
-contractguard check <old-spec> <new-spec> [--format text|markdown|json] [--fail-on breaking|review|never] [--hide-safe]
+contractguard check <old-spec> <new-spec> [options]
 ```
+
+| Option | Default | Description |
+|---|---|---|
+| `-f, --format <text\|markdown\|json>` | `text` | Output format |
+| `--fail-on <breaking\|review\|never>` | `breaking` | Exit with code 1 when changes at or above this severity are found |
+| `--hide-safe` | off | Leave safe changes out of text/markdown output |
+| `--no-color` | off | Disable colored output |
+| `-h, --help` / `-v, --version` | | Show help / version |
 
 | Exit code | Meaning |
 |---|---|
@@ -148,11 +160,14 @@ npm run build       # → dist/
 Use it as a library too:
 
 ```ts
-import { compareFiles } from 'contractguard';
+import { compareFiles, compareText, compare } from 'contractguard';
 
-const report = await compareFiles('old.yaml', 'new.yaml');
+const report = await compareFiles('old.yaml', 'new.yaml'); // load YAML/JSON files
 report.summary;   // { breaking: 12, review: 4, safe: 6 }
 report.changes;   // [{ kind, severity, endpoint, location, message, reason, suggestion }]
+
+compareText(oldYaml, newYaml); // in-memory YAML/JSON strings
+compare(oldDoc, newDoc);       // already-parsed OpenAPI objects
 ```
 
 ## Roadmap
