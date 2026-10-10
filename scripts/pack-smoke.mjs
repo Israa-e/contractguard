@@ -1,8 +1,8 @@
 // Packs ContractGuard the way npm publishes it, installs the tarball into an empty project,
-// and runs the installed CLI and library. Catches what build + tests can't: files missing
-// from the package, a broken `bin` link, or a bad `main`/`types` entry.
+// runs the installed CLI and library, and typechecks an import of it. Catches what build +
+// tests can't: files missing from the package, a broken `bin` link, or a bad `main`/`types` entry.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,14 +18,11 @@ function check(label, condition, details = '') {
 }
 
 try {
-  // Build first and pack without scripts, so `prepare` output can't mix into the JSON.
-  execFileSync('npm', ['run', 'build'], { cwd: root, stdio: 'ignore' });
-  const [{ filename }] = JSON.parse(
-    execFileSync('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', dir], {
-      cwd: root,
-      encoding: 'utf8',
-    }),
-  );
+  // `npm pack` runs `prepare` (the build), exactly as publishing does. The tarball is found
+  // by listing the directory rather than parsing pack's output, which build logs can pollute.
+  execFileSync('npm', ['pack', '--pack-destination', dir], { cwd: root, stdio: ['ignore', 'ignore', 'inherit'] });
+  const filename = readdirSync(dir).find((f) => f.endsWith('.tgz'));
+  check('npm pack produces a tarball', filename !== undefined);
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'pack-smoke', private: true, type: 'module' }));
   execFileSync('npm', ['install', '--no-audit', '--no-fund', join(dir, filename)], { cwd: dir, stdio: 'ignore' });
   check('installs from the packed tarball', true);
@@ -48,6 +45,23 @@ const r = await compareFiles(${JSON.stringify(v1)}, ${JSON.stringify(v2)});
 if (!(r.summary.breaking > 0)) process.exit(1);`;
   const library = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: dir, encoding: 'utf8' });
   check('library import from the installed package', library.status === 0, library.stderr);
+
+  // Strict NodeNext resolution, as a TypeScript consumer would compile against the `types` entry.
+  writeFileSync(
+    join(dir, 'consumer.mts'),
+    `import { compareFiles, type Report, type Severity } from 'contractguard';
+const report: Report = await compareFiles('old.yaml', 'new.yaml');
+const severity: Severity | undefined = report.changes[0]?.severity;
+export { severity };
+`,
+  );
+  const tsc = join(root, 'node_modules', 'typescript', 'bin', 'tsc');
+  const tscArgs = ['--noEmit', '--strict', '--module', 'nodenext', '--moduleResolution', 'nodenext'];
+  const types = spawnSync(process.execPath, [tsc, ...tscArgs, '--target', 'es2022', 'consumer.mts'], {
+    cwd: dir,
+    encoding: 'utf8',
+  });
+  check('TypeScript types of the installed package', types.status === 0, types.stdout + types.stderr);
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
