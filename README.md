@@ -51,10 +51,12 @@ To put the `contractguard` command on your PATH, run `npm link` from the clone. 
 
 ```bash
 contractguard check <old-spec> <new-spec> [options]
+contractguard check --base <git-ref> <spec> [options]   # old spec = <spec> at a commit, branch or tag
 ```
 
 | Option | Default | Description |
 |---|---|---|
+| `--base <git-ref>` | | Compare `<spec>` with its version at `<git-ref>` instead of with a second file |
 | `-f, --format <text\|markdown\|json>` | `text` | Output format |
 | `--fail-on <breaking\|review\|never>` | `breaking` | Exit with code 1 when changes at or above this severity are found |
 | `--hide-safe` | off | Leave safe changes out of text/markdown output |
@@ -69,7 +71,9 @@ contractguard check <old-spec> <new-spec> [options]
 
 ### In CI
 
-Copy [`docs/github-action-example.yml`](docs/github-action-example.yml) into the repository that owns the API. On every pull request it compares `openapi.yaml` with the base branch, fails the check on breaking changes, and writes a Markdown report to the job summary.
+Copy [`docs/github-action-example.yml`](docs/github-action-example.yml) into the repository that owns the API. On every pull request it runs `contractguard check --base "origin/$BASE_REF" openapi.yaml`, fails the check on breaking changes, and writes a Markdown report to the job summary.
+
+`--base` reads the old spec with git (`rev-parse` + `cat-file`), without changing the working tree or index. The ref must exist locally, so check out with `fetch-depth: 0`: the default shallow checkout doesn't fetch the base branch, and ContractGuard then exits with code `2` and says so. An unknown ref, a spec missing at the ref, or running outside a git repository also exit with `2`, never with a compatibility verdict.
 
 This repository runs ContractGuard against its own example in [CI](.github/workflows/ci.yml) and asserts that the breakage is caught.
 
@@ -131,6 +135,7 @@ These are deliberate scope decisions for v0.1, not oversights:
 - **Local `$ref`s only.** Multi-file specs must be bundled first (e.g. `redocly bundle`).
 - **Structural checks only.** The loader rejects malformed parts the comparison reads (operations, parameters, request bodies, responses, `security`) with exit code `2`, but it is not a full OpenAPI validator. Lint specs separately (e.g. `redocly lint`).
 - **OpenAPI 3.0 and 3.1.** Swagger 2.0 is rejected with conversion guidance.
+- **`--base` compares with the ref itself, not a merge base,** and needs the spec at the same path there (renames aren't followed). For a merge base, pass it explicitly: `--base "$(git merge-base origin/main HEAD)"`.
 - **`oneOf`/`anyOf` are compared by branch position.** If the number of branches changes, the change is flagged for review rather than analysed.
 - **Not yet checked:** response headers, `discriminator` mappings, callbacks/webhooks, security scheme definitions themselves (only which schemes are required), and parameter `style`/`explode`.
 
@@ -139,6 +144,7 @@ These are deliberate scope decisions for v0.1, not oversights:
 ```text
 src/
   loader.ts          parse YAML/JSON, validate the OpenAPI version, resolve every $ref up front
+  git.ts             --base: read a spec at a git ref without touching the working tree
   validate.ts        reject malformed structures the comparison reads, with the exact location
   refs.ts            JSON-pointer $ref resolution and circular-alias detection
   diff/spec.ts       endpoint-level diff: paths, params, bodies, responses, security
@@ -147,7 +153,7 @@ src/
   report/format.ts   text / markdown / json output
   cli/run.ts         argument parsing and exit codes (pure, testable)
   bin.ts             process entry point
-test/                118 tests: every schema rule in both directions, operations, CLI, loading
+test/                133 tests: every schema rule in both directions, operations, CLI, loading
 examples/            a realistic v1 → v2 migration of a delivery orders API
 ```
 
@@ -175,7 +181,7 @@ compare(oldDoc, newDoc);       // already-parsed OpenAPI objects
 
 ## Roadmap
 
-- [ ] `--base <git-ref>`: read the old spec straight from git
+- [x] `--base <git-ref>`: read the old spec straight from git
 - [ ] Config file: ignore specific changes with a required justification (an audit trail for accepted breakage)
 - [ ] Response headers and `discriminator` support
 - [ ] External `$ref` bundling

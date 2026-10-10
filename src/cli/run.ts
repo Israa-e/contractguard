@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
-import { compareFiles } from '../index.js';
-import { SpecLoadError } from '../loader.js';
+import { loadSpecAtRef } from '../git.js';
+import { compare, compareFiles } from '../index.js';
+import { loadSpec, SpecLoadError } from '../loader.js';
 import { FORMATS, formatReport, type Format } from '../report/format.js';
 import type { Report } from '../types.js';
 import { VERSION } from '../version.js';
@@ -21,8 +22,11 @@ Detect breaking changes between two OpenAPI 3.x contracts.
 
 Usage:
   contractguard check <old-spec> <new-spec> [options]
+  contractguard check --base <git-ref> <spec> [options]
 
 Options:
+      --base <git-ref>                Compare <spec> with its version at a git commit,
+                                      branch or tag, instead of with a second file
   -f, --format <text|markdown|json>   Output format (default: text)
       --fail-on <breaking|review|never>
                                       Exit with code 1 when changes at or above this
@@ -37,9 +41,9 @@ Exit codes:
   1  incompatible changes found
   2  invalid usage or unreadable spec
 
-Example:
-  git show origin/main:openapi.yaml > /tmp/base.yaml
-  contractguard check /tmp/base.yaml openapi.yaml --format markdown`;
+Examples:
+  contractguard check old.yaml new.yaml
+  contractguard check --base origin/main openapi.yaml --format markdown`;
 
 export async function run(argv: string[], io: IO): Promise<number> {
   let parsed;
@@ -48,6 +52,7 @@ export async function run(argv: string[], io: IO): Promise<number> {
       args: argv,
       allowPositionals: true,
       options: {
+        base: { type: 'string' },
         format: { type: 'string', short: 'f', default: 'text' },
         'fail-on': { type: 'string', default: 'breaking' },
         'hide-safe': { type: 'boolean', default: false },
@@ -72,7 +77,13 @@ export async function run(argv: string[], io: IO): Promise<number> {
 
   const [command, oldFile, newFile, ...extra] = positionals;
   if (command !== 'check') return usageError(io, `Unknown command "${command}"`);
-  if (!oldFile || !newFile || extra.length) return usageError(io, 'Expected exactly two spec files: <old-spec> <new-spec>');
+  const base = values.base;
+  if (base === undefined) {
+    if (!oldFile || !newFile || extra.length) return usageError(io, 'Expected exactly two spec files: <old-spec> <new-spec>');
+  } else {
+    if (!base) return usageError(io, '--base needs a git ref, e.g. --base origin/main');
+    if (!oldFile || newFile !== undefined) return usageError(io, 'With --base, expected exactly one spec file: <spec>');
+  }
 
   const format = values.format as Format;
   if (!FORMATS.includes(format)) return usageError(io, `--format must be one of: ${FORMATS.join(', ')}`);
@@ -81,7 +92,7 @@ export async function run(argv: string[], io: IO): Promise<number> {
 
   let report: Report;
   try {
-    report = await compareFiles(oldFile, newFile);
+    report = base === undefined ? await compareFiles(oldFile, newFile) : await compareWithRef(base, oldFile);
   } catch (err) {
     if (err instanceof SpecLoadError) {
       io.stderr(`contractguard: ${err.message}`);
@@ -98,6 +109,13 @@ export async function run(argv: string[], io: IO): Promise<number> {
   );
 
   return shouldFail(report, failOn) ? EXIT.INCOMPATIBLE : EXIT.OK;
+}
+
+/** The working-tree file is loaded first, so problems with it are reported before git's. */
+async function compareWithRef(ref: string, file: string): Promise<Report> {
+  const current = await loadSpec(file);
+  const previous = await loadSpecAtRef(ref, file);
+  return compare(previous.doc, current.doc);
 }
 
 export function shouldFail(report: Report, failOn: FailOn): boolean {

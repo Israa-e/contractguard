@@ -11,6 +11,8 @@ jobs:
   contract:
     runs-on: ubuntu-latest
     steps:
+      # --base reads the base branch from git. The default shallow checkout (fetch-depth: 1)
+      # only fetches the pull request's merge commit, so origin/<base branch> would not exist.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -26,8 +28,12 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/contractguard" github:Israa-e/contractguard
           echo "$RUNNER_TEMP/contractguard/node_modules/.bin" >> "$GITHUB_PATH"
 
+      # github.base_ref is set on pull_request events. It goes through env rather than being
+      # inlined into the script, as GitHub recommends for expressions used in shell commands.
+      # The default shell has no pipefail, so PIPESTATUS carries ContractGuard's exit code past tee.
       - name: Check compatibility with the base branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git show "origin/${{ github.base_ref }}:openapi.yaml" > /tmp/base-openapi.yaml
-          contractguard check /tmp/base-openapi.yaml openapi.yaml --format markdown | tee -a "$GITHUB_STEP_SUMMARY"
+          contractguard check --base "origin/$BASE_REF" openapi.yaml --format markdown | tee -a "$GITHUB_STEP_SUMMARY"
           exit "${PIPESTATUS[0]}"
