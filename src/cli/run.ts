@@ -75,14 +75,17 @@ export async function run(argv: string[], io: IO): Promise<number> {
     return EXIT.OK;
   }
 
-  const [command, oldFile, newFile, ...extra] = positionals;
+  // <old-spec> <new-spec> without --base, or the single current <spec> with it.
+  const [command, ...specs] = positionals;
   if (command !== 'check') return usageError(io, `Unknown command "${command}"`);
   const base = values.base;
   if (base === undefined) {
-    if (!oldFile || !newFile || extra.length) return usageError(io, 'Expected exactly two spec files: <old-spec> <new-spec>');
+    if (specs.length !== 2 || specs.some((s) => !s)) {
+      return usageError(io, 'Expected exactly two spec files: <old-spec> <new-spec>');
+    }
   } else {
     if (!base) return usageError(io, '--base needs a git ref, e.g. --base origin/main');
-    if (!oldFile || newFile !== undefined) return usageError(io, 'With --base, expected exactly one spec file: <spec>');
+    if (specs.length !== 1 || !specs[0]) return usageError(io, 'With --base, expected exactly one spec file: <spec>');
   }
 
   const format = values.format as Format;
@@ -92,7 +95,7 @@ export async function run(argv: string[], io: IO): Promise<number> {
 
   let report: Report;
   try {
-    report = base === undefined ? await compareFiles(oldFile, newFile) : await compareWithRef(base, oldFile);
+    report = base === undefined ? await compareFiles(specs[0], specs[1]) : await compareWithRef(base, specs[0]);
   } catch (err) {
     if (err instanceof SpecLoadError) {
       io.stderr(`contractguard: ${err.message}`);

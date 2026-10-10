@@ -153,7 +153,7 @@ src/
   report/format.ts   text / markdown / json output
   cli/run.ts         argument parsing and exit codes (pure, testable)
   bin.ts             process entry point
-test/                133 tests: every schema rule in both directions, operations, CLI, loading
+test/                134 tests: every schema rule in both directions, operations, CLI, loading
 examples/            a realistic v1 → v2 migration of a delivery orders API
 ```
 

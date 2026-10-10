@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -40,6 +40,8 @@ let stable: string;
 let broken: string;
 /** api/new.yaml: untracked, so it does not exist at any ref. */
 let untracked: string;
+/** api/link.yaml: committed as a symlink to stable.yaml. */
+let link: string;
 let statusBefore: string;
 
 beforeAll(async () => {
@@ -51,11 +53,13 @@ beforeAll(async () => {
   stable = join(api, 'stable.yaml');
   broken = join(api, 'broken.yaml');
   untracked = join(api, 'new.yaml');
+  link = join(api, 'link.yaml');
 
   git(tempDir, 'init', '--quiet', 'repo');
   await copyFile(V1, changed);
   await copyFile(V1, stable);
   await writeFile(broken, 'openapi: 3.0.3\ninfo: { title: t, version: "1" }\npaths:\n  /a:\n    get: oops\n');
+  await symlink('stable.yaml', link);
   git(repo, 'add', '.');
   git(repo, 'commit', '--quiet', '--no-verify', '-m', 'v1');
   git(repo, 'tag', 'v1');
@@ -136,6 +140,16 @@ describe('check --base <git-ref> <spec>', () => {
     const { code, stderr } = await cli('check', '--base', 'HEAD', broken);
     expect(code).toBe(EXIT.ERROR);
     expect(stderr).toContain(`HEAD:${broken}: paths["/a"].get: expected an object`);
+  });
+
+  it('exits 2 with a clear error when the spec is a symlink at the ref', async () => {
+    // Git stores a symlink's target path ("stable.yaml"), not the spec it points to.
+    const { code, stdout, stderr } = await cli('check', '--base', 'HEAD', link);
+    expect(code).toBe(EXIT.ERROR);
+    expect(stdout).toBe('');
+    expect(stderr).toContain(`${link} is a symlink at HEAD`);
+    expect(stderr).toContain('does not support symlinked specs');
+    expect(stderr).not.toContain('expected an OpenAPI document');
   });
 
   it('exits 2 outside a git repository', async () => {

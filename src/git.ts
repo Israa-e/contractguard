@@ -50,8 +50,22 @@ export async function loadSpecAtRef(ref: string, file: string): Promise<LoadedSp
     );
   }
 
+  const sha = commit.stdout.trim();
+  const path = `./${basename(file)}`;
+
+  // A symlink's blob is its target path, not the spec it points to, so check the mode first.
+  const entry = await git(['ls-tree', '-z', sha, '--', path], cwd);
+  if (entry.status !== 0) throw new SpecLoadError(`--base: git failed: ${firstLine(entry.stderr)}`);
+  if (entry.stdout === '') throw new SpecLoadError(`--base: ${file} does not exist at ${ref}`);
+  if (entry.stdout.startsWith('120000 ')) {
+    throw new SpecLoadError(
+      `--base: ${file} is a symlink at ${ref}, and --base does not support symlinked specs. ` +
+        'Pass the path of the file it points to instead.',
+    );
+  }
+
   // --filters gives the content a checkout would (line endings, Git LFS), not the raw blob.
-  const blob = await git(['cat-file', '--filters', `${commit.stdout.trim()}:./${basename(file)}`], cwd);
+  const blob = await git(['cat-file', '--filters', `${sha}:${path}`], cwd);
   if (blob.status !== 0) {
     if (/does not exist|exists on disk, but not in/i.test(blob.stderr)) {
       throw new SpecLoadError(`--base: ${file} does not exist at ${ref}`);

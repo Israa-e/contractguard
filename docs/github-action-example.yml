@@ -28,6 +28,13 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/contractguard" github:Israa-e/contractguard
           echo "$RUNNER_TEMP/contractguard/node_modules/.bin" >> "$GITHUB_PATH"
 
+      # First PR: if openapi.yaml does not exist on the base branch yet, ContractGuard exits
+      # with code 2 ("does not exist at origin/<base>") and this check fails. That is expected
+      # for the PR that introduces the spec: there is no previous contract to compare with, and
+      # a missing base is never reported as compatible. Merge that one PR once a reviewer has
+      # confirmed the failure is this message (or add this workflow after the spec has landed);
+      # every later PR is compared with the spec on its base branch as usual.
+      #
       # github.base_ref is set on pull_request events. It goes through env rather than being
       # inlined into the script, as GitHub recommends for expressions used in shell commands.
       # The default shell has no pipefail, so PIPESTATUS carries ContractGuard's exit code past tee.
