@@ -1,0 +1,42 @@
+{
+  "name": "contractguard",
+  "version": "0.1.0",
+  "description": "Detect breaking changes between two OpenAPI contracts before they reach production.",
+  "type": "module",
+  "bin": {
+    "contractguard": "dist/bin.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "tsx src/bin.ts check examples/orders-v1.yaml examples/orders-v2.yaml",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "openapi",
+    "breaking-changes",
+    "api",
+    "contract-testing",
+    "ci"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

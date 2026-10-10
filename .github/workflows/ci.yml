@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      # Dogfooding: the example migration must be caught as breaking (exit code 1).
+      - name: ContractGuard catches the example breaking change
+        run: |
+          set +e
+          node dist/bin.js check examples/orders-v1.yaml examples/orders-v2.yaml --format markdown >> "$GITHUB_STEP_SUMMARY"
+          code=$?
+          test "$code" -eq 1 || { echo "expected exit code 1, got $code"; exit 1; }

@@ -1,0 +1,112 @@
+openapi: 3.0.3
+info:
+  title: Delivery Orders API
+  version: 2.0.0
+security:
+  - bearerAuth: []
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, maximum: 50 }        # tightened request constraint
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/OrderStatus' }
+        - name: restaurantId                             # new REQUIRED query param
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of orders
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Order' }
+                  nextCursor: { type: string }           # new optional response field
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewOrder' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+  /orders/{orderId}:                                     # param rename only: not breaking
+    get:
+      operationId: fetchOrder                            # SDK method rename
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: The order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '404':
+          description: Not found
+  # DELETE /orders/{id} removed (was deprecated)
+  /health:
+    get:
+      operationId: health
+      responses:                                         # now inherits global bearerAuth
+        '200':
+          description: OK
+  /restaurants:
+    get:
+      operationId: listRestaurants
+      responses:
+        '200':
+          description: Restaurants
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  schemas:
+    OrderStatus:
+      type: string
+      enum: [pending, preparing, on_the_way, delivered, refunded]   # new enum value
+    Order:
+      type: object
+      required: [id, status, amount, customer]
+      properties:
+        id: { type: integer, readOnly: true }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        amount: { type: number }                       # `total` renamed to `amount`
+        note: { type: string, nullable: true }
+        customer: { $ref: '#/components/schemas/Customer' }
+    Customer:
+      type: object
+      required: [name]                                 # phone no longer guaranteed
+      properties:
+        name: { type: string }
+        phone: { type: string }
+    NewOrder:
+      type: object
+      required: [items, deliveryAddress]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [productId, quantity]
+            properties:
+              productId: { type: string }               # integer -> string
+              quantity: { type: integer, minimum: 1 }
+        note: { type: string, maxLength: 500 }
+        deliveryAddress: { type: string }               # new REQUIRED request field

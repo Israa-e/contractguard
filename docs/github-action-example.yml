@@ -1,0 +1,29 @@
+# Copy into .github/workflows/api-contract.yml in the repository that owns the API.
+# Fails the pull request when openapi.yaml changes in a backwards-incompatible way,
+# and posts the report to the job summary.
+name: API contract
+
+on:
+  pull_request:
+    paths: ['openapi.yaml']
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install ContractGuard
+        run: npm install -g github:<your-github-user>/contractguard
+
+      - name: Check compatibility with the base branch
+        run: |
+          git show "origin/${{ github.base_ref }}:openapi.yaml" > /tmp/base-openapi.yaml
+          contractguard check /tmp/base-openapi.yaml openapi.yaml --format markdown | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "${PIPESTATUS[0]}"
