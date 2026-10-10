@@ -21,6 +21,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # The published package must install and run, not just build.
+      - run: npm run test:pack
 
       # Dogfooding: the example migration must be caught as breaking (exit code 1).
       - name: ContractGuard catches the example breaking change

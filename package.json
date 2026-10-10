@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:pack": "node scripts/pack-smoke.mjs",
     "demo": "tsx src/bin.ts check examples/orders-v1.yaml examples/orders-v2.yaml",
     "prepare": "npm run build"
   },

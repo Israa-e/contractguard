@@ -157,6 +157,7 @@ examples/            a realistic v1 → v2 migration of a delivery orders API
 npm test            # vitest
 npm run typecheck
 npm run build       # → dist/
+npm run test:pack   # pack, install into an empty project, run the CLI and library
 ```
 
 Use it as a library too:
